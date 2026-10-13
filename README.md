@@ -69,6 +69,18 @@ This pipeline is engineered to support several critical business functions:
 
 ---
 
+## Architecture Overview :
+
+[![Architecture diagram of angadkumar9128/retail-data-engineering-analytics-pipeline-with-airflow-and-dbt](https://gitdiagram.com/angadkumar9128/retail-data-engineering-analytics-pipeline-with-airflow-and-dbt/diagram.png)](https://gitdiagram.com/angadkumar9128/retail-data-engineering-analytics-pipeline-with-airflow-and-dbt?utm_source=readme&utm_medium=picture)
+
+---
+
+## 🔯Project Working Diagram: 
+
+<img width="6027" height="10650" alt="diagram" src="https://github.com/user-attachments/assets/1b85c414-0454-47ef-835f-45a67254e933" />
+
+---
+
 ## 🏗️ System Architecture
 
 The system is built on a decoupled architecture where orchestration, transformation, and compute are handled by specialized tools:
