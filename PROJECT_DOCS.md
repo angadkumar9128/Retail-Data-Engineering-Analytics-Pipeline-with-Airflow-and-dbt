@@ -378,3 +378,75 @@ This flow demonstrates the complete analytics lifecycle: source data is ingested
 ## 7. ✅ Summary
 
 This project combines a realistic retail dataset with a modern data engineering stack to demonstrate a complete end-to-end analytics pipeline. The dataset is not just a set of CSV files—it represents a business model where customer behavior, store performance, product sales, and order details are connected through strong relational keys. By processing this data through Bronze, Silver, and Gold layers, the system transforms raw source records into reliable, testable, and analytics-ready business intelligence.
+
+---
+
+## Appendix A — Original "polish" version (commit 1e055692ac17d7b830b6119f18c195aea5d56e45)
+
+Below is the full content of the earlier polished documentation that existed in commit 1e055692... (preserved here for history and comparison). This section reproduces that earlier document verbatim and is intentionally left read-only; do not edit this block unless you intend to preserve a new snapshot of the earlier version.
+
+(START OF PRESERVED CONTENT)
+
+# 📂 Enterprise Retail Analytics Transformation Pipeline: Detailed Component Documentation
+
+This document provides a comprehensive, file-by-file breakdown of the project and explains how the components work together to build an end-to-end retail analytics pipeline. It is intended to help new developers, data engineers, and architects understand the architecture, dataset design, transformation flow, and operational logic of the system.
+
+---
+
+## 1. 🏗️ Infrastructure & Environment (`airflow_dbt_project/`)
+
+These files define the runtime environment and the containerized infrastructure used to host the orchestration layer.
+
+### `Dockerfile`
+
+- **Purpose**: Defines the custom Airflow runtime environment.
+- **Key Logic**:
+  - Extends the official `apache/airflow:3.2.0` image.
+  - Installs `gcc` and other system-level dependencies required for compiling certain Python libraries.
+  - Installs Python dependencies listed in `requirements.txt`.
+- **Interactions**: This image is built and deployed by `docker-compose.yaml`.
+
+### `docker-compose.yaml`
+
+- **Purpose**: Orchestrates the local deployment of the multi-service Airflow stack.
+- **Key Components**:
+  - `postgres`: The metadata database that stores DAG states, task history, and user accounts.
+  - `redis`: The message broker used by the CeleryExecutor to distribute tasks to workers.
+  - `airflow-apiserver`: Provides the REST API for the Airflow UI and external triggers.
+  - `airflow-scheduler`: The heartbeat of Airflow; it monitors DAGs and schedules tasks.
+  - `airflow-worker`: The execution engine that actually runs the Bash and Python commands.
+  - `airflow-init`: A one-time setup container that migrates the database and creates the admin user.
+- **Critical Config**: Maps local volumes (like `/dags` and `/walmart_project`) into the container so that code changes on your host machine are immediately reflected in the cluster.
+
+### `requirements.txt`
+
+- **Purpose**: Explicitly defines the Python library versions.
+- **Critical Dependencies**:
+  - `apache-airflow`: Core orchestration framework.
+  - `dbt-core`: The transformation engine.
+  - `dbt-databricks`: The adapter that allows dbt to communicate with Databricks SQL warehouses.
+
+### `config/airflow.cfg`
+
+- **Purpose**: The primary configuration file for the Airflow instance.
+- **Key Settings**: Defines the `dags_folder` location and core execution settings.
+
+---
+
+## 2. 🚀 Orchestration Layer (`airflow_dbt_project/dags/`)
+
+(END OF PRESERVED CONTENT)
+
+
+---
+
+## Change log
+
+- Preserved earlier polished content from commit `1e055692ac17d7b830b6119f18c195aea5d56e45` in Appendix A.
+- Appended Appendix A to ensure the earlier doc is retained alongside the expanded dataset documentation.
+
+---
+
+## Notes
+
+If you'd like Appendix A kept in a separate file instead (for clarity), I can move it to `docs/PROJECT_DOCS_v1e055692.md` and keep `PROJECT_DOCS.md` focused only on the latest merged content. Reply with your preference and I'll update accordingly.
