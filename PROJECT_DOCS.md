@@ -1,6 +1,6 @@
 # 📂 Enterprise Retail Analytics Transformation Pipeline: Detailed Component Documentation
 
-This document provides a comprehensive, file-by-file breakdown of the project. It is designed to help new developers and architects understand the exact role of every file and how they interconnect to form the end-to-end data pipeline.
+This document provides a comprehensive, file-by-file breakdown of the project. It is designed to help new developers and architects understand the exact role of every file and how they interconnect within the system.
 
 ---
 
@@ -52,7 +52,7 @@ This directory contains the logic that automates the movement and transformation
 
 - **Purpose**: The Master DAG that coordinates the entire data lifecycle.
 - **Execution Logic (Linear Pipeline)**:
-  1. **`ingest_cdc`**: Uses the `WorkspaceClient` (Databricks SDK) to trigger a specific Job ID. It includes a `while True` polling loop that checks the job status every 5 seconds until it succeeds or fails.
+  1. **`ingest_cdc`**: Uses the `WorkspaceClient` (Databricks SDK) to trigger a specific Job ID. It includes a `while True` polling loop that checks the job status every 5 seconds until it succeeds.
   2. **`clean_target`**: A Bash operator that removes the `target/` and `logs/` directories in the dbt project to prevent artifact collisions.
   3. **`source_freshness`**: Runs `dbt source freshness` to ensure the Bronze layer has new data before spending compute resources on transformations.
   4. **`silver_technical` $\rightarrow$ `silver_technical_tests`**: Runs the cleaning models and validates them.
@@ -73,7 +73,7 @@ This is the dbt project where business logic is converted into SQL.
 - **Purpose**: Global settings for the dbt project.
 - **Key Logic**:
   - Sets the project name and profile.
-  - **Materialization Mapping**: Defines that `silver_t` and `silver_b` are `table` materializations, while `gold/ephemeral` models are `ephemeral` (views that don't exist in the DB but are used as CTEs).
+  - **Materialization Mapping**: Defines that `silver_t` and `silver_b` are `table` materializations, while `gold/ephemeral` models are `ephemeral` (views that don't exist in the DB but are used as intermediate steps).
 
 ### `profiles.yml`
 
@@ -90,7 +90,7 @@ This is the dbt project where business logic is converted into SQL.
 ### `snapshots/` (e.g., `dim_customers.yml`)
 
 - **Purpose**: Implements Slowly Changing Dimensions (SCD Type 2).
-- **Logic**: Uses the `timestamp` strategy. It tracks the `updated_timestamp` of records; if a change is detected, it "expires" the old record and creates a new one, preserving the history of the data.
+- **Logic**: Uses the `timestamp` strategy. It tracks the `updated_timestamp` of records; if a change is detected, it "expires" the old record and creates a new one, preserving the history of changes over time.
 
 ### `tests/test_obt.sql`
 
@@ -119,8 +119,11 @@ These files provide the foundation for local testing and initial environment set
 - **Purpose**: The raw source of truth.
 - **Role**: Acts as the "Bronze" data that the pipeline processes.
 
+The Walmart dataset in `walmart_dataset/data/` is a synthetic but realistic retail dataset designed to simulate operational business activity across customers, stores, products, employees, orders, and line items. The dataset is structured as a classic retail star/snowflake-style model: `customers` stores shopper profile information, `stores` defines retail locations, `products` contains item catalog data, `employees` captures staff assigned to a store, `orders` represents a customer purchase event at a specific store, and `order_items` records the detailed product-level breakdown of each order. The core relationship chain is `orders.customer_id -> customers.customer_id`, `orders.store_id -> stores.store_id`, `order_items.order_id -> orders.order_id`, `order_items.product_id -> products.product_id`, and `employees.store_id -> stores.store_id`. In effect, the business question can be answered by joining the order header with its items, then enriching it with customer, product, and store metadata. The working process is straightforward: raw CSV files are loaded into the Bronze layer via `load_data.py`, then the pipeline normalizes and cleans them in the Silver Technical layer (type conversion, null handling, timestamp standardization, and logical filtering), followed by the Silver Business layer where these entities are joined into a denormalized One Big Table (`obt_b`) for analytics. The final Gold layer then builds reporting tables and dimensions, using `updated_timestamp` values and `is_active` flags to support change tracking, incremental processing, and historical analysis. This design makes the dataset ideal for learning Medallion Architecture, foreign-key-based modeling, dbt transformations, and end-to-end retail analytics workflows.
+
 ---
 
 ## 🔄 Component Interdependency Map
 
-$\text{Raw CSVs} \xrightarrow{\text{load\_data.py}} \text{SQL Database (Bronze)} \xrightarrow{\text{orchestrate.py (Airflow)}} \text{dbt (Silver T)} \xrightarrow{\text{dbt (Silver B)}} \text{dbt (Gold/Snapshots)} \xrightarrow{\text{BI Tool}}$
+$\text{Raw CSVs} \xrightarrow{\text{load\_data.py}} \text{SQL Database (Bronze)} \xrightarrow{\text{orchestrate.py (Airflow)}} \text{dbt (Silver T)} \xrightarrow{\text{dbt (Silver B)}} \text{dbt (Gold)} \xrightarrow{\text{BI / Dashboards}} \text{Decision Making}$
+
