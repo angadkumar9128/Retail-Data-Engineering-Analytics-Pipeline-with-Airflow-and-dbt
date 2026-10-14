@@ -1,129 +1,299 @@
 # 📂 Enterprise Retail Analytics Transformation Pipeline: Detailed Component Documentation
 
-This document provides a comprehensive, file-by-file breakdown of the project. It is designed to help new developers and architects understand the exact role of every file and how they interconnect within the system.
+This document provides a comprehensive, file-by-file breakdown of the project and explains how the components work together to build an end-to-end retail analytics pipeline. It is intended to help new developers, data engineers, and architects understand the architecture, dataset design, transformation flow, and operational logic of the system.
 
 ---
 
 ## 1. 🏗️ Infrastructure & Environment (`airflow_dbt_project/`)
 
-These files define the runtime environment and the containerized infrastructure used to host the orchestration layer.
+These files define the runtime infrastructure and the execution environment for the orchestration layer.
 
 ### `Dockerfile`
 
-- **Purpose**: Defines the custom Airflow runtime environment.
+- **Purpose**: Defines the custom Airflow runtime image.
 - **Key Logic**:
   - Extends the official `apache/airflow:3.2.0` image.
-  - Installs `gcc` and other system-level dependencies required for compiling certain Python libraries.
-  - Installs Python dependencies listed in `requirements.txt`.
-- **Interactions**: This image is built and deployed by `docker-compose.yaml`.
+  - Installs `gcc` and required system dependencies for Python libraries.
+  - Installs the Python dependencies listed in `requirements.txt`.
+- **Interaction**: This image is built and deployed by `docker-compose.yaml`.
 
 ### `docker-compose.yaml`
 
-- **Purpose**: Orchestrates the local deployment of the multi-service Airflow stack.
+- **Purpose**: Launches the full local Airflow environment.
 - **Key Components**:
-  - `postgres`: The metadata database that stores DAG states, task history, and user accounts.
-  - `redis`: The message broker used by the CeleryExecutor to distribute tasks to workers.
-  - `airflow-apiserver`: Provides the REST API for the Airflow UI and external triggers.
-  - `airflow-scheduler`: The heartbeat of Airflow; it monitors DAGs and schedules tasks.
-  - `airflow-worker`: The execution engine that actually runs the Bash and Python commands.
-  - `airflow-init`: A one-time setup container that migrates the database and creates the admin user.
-- **Critical Config**: Maps local volumes (like `/dags` and `/walmart_project`) into the container so that code changes on your host machine are immediately reflected in the cluster.
+  - `postgres`: Metadata database for Airflow state and task history.
+  - `redis`: Message broker used by Celery.
+  - `airflow-apiserver`: Exposes the Airflow UI and API.
+  - `airflow-scheduler`: Schedules and monitors DAG execution.
+  - `airflow-worker`: Executes tasks.
+  - `airflow-init`: Creates the initial database and admin credentials.
+- **Critical Configuration**: Mounts local folders like `/dags` and `/walmart_project` so code changes are reflected immediately in the running containers.
 
 ### `requirements.txt`
 
-- **Purpose**: Explicitly defines the Python library versions.
-- **Critical Dependencies**:
-  - `apache-airflow`: Core orchestration framework.
-  - `dbt-core`: The transformation engine.
-  - `dbt-databricks`: The adapter that allows dbt to communicate with Databricks SQL warehouses.
+- **Purpose**: Defines the exact Python package versions used in the project.
+- **Core Dependencies**:
+  - `apache-airflow`
+  - `dbt-core`
+  - `dbt-databricks`
 
 ### `config/airflow.cfg`
 
-- **Purpose**: The primary configuration file for the Airflow instance.
-- **Key Settings**: Defines the `dags_folder` location and core execution settings.
+- **Purpose**: Primary Airflow configuration file.
+- **Key Settings**: Contains DAG folder location and core runtime settings.
 
 ---
 
 ## 2. 🚀 Orchestration Layer (`airflow_dbt_project/dags/`)
 
-This directory contains the logic that automates the movement and transformation of data.
+This directory contains the DAG logic that orchestrates the full data lifecycle.
 
 ### `orchestrate.py`
 
-- **Purpose**: The Master DAG that coordinates the entire data lifecycle.
-- **Execution Logic (Linear Pipeline)**:
-  1. **`ingest_cdc`**: Uses the `WorkspaceClient` (Databricks SDK) to trigger a specific Job ID. It includes a `while True` polling loop that checks the job status every 5 seconds until it succeeds.
-  2. **`clean_target`**: A Bash operator that removes the `target/` and `logs/` directories in the dbt project to prevent artifact collisions.
-  3. **`source_freshness`**: Runs `dbt source freshness` to ensure the Bronze layer has new data before spending compute resources on transformations.
-  4. **`silver_technical` $\rightarrow$ `silver_technical_tests`**: Runs the cleaning models and validates them.
-  5. **`silver_business` $\rightarrow$ `silver_business_tests`**: Runs the OBT (One Big Table) logic and validates it.
-  6. **`gold_ephermeral`**: Processes intermediate views.
-  7. **`gold_dimensions`**: Executes `dbt snapshot` to implement SCD Type 2 tracking.
-  8. **`gold_facts`**: Builds the final reporting tables.
-- **Interactions**: Bridges the gap between Databricks Cloud (via API) and the local dbt project (via Bash CLI).
+- **Purpose**: Master DAG that coordinates ingestion, validation, transformation, and reporting.
+- **Execution Flow**:
+  1. **`ingest_cdc`**  
+     Triggers a Databricks job via the `WorkspaceClient` SDK and polls until completion.
+  2. **`clean_target`**  
+     Deletes stale dbt build artifacts to avoid collisions.
+  3. **`source_freshness`**  
+     Runs `dbt source freshness` to verify Bronze data availability.
+  4. **`silver_technical` -> `silver_technical_tests`**  
+     Cleans and validates the technical layer.
+  5. **`silver_business` -> `silver_business_tests`**  
+     Builds the business layer and tests the model logic.
+  6. **`gold_ephemeral`**  
+     Produces intermediate Gold-layer views.
+  7. **`gold_dimensions`**  
+     Executes dbt snapshots for Slowly Changing Dimension tracking.
+  8. **`gold_facts`**  
+     Produces final curated fact tables for business reporting.
+- **Interaction**: Connects the Databricks environment to the local dbt project using Airflow Bash operators and the Databricks API.
 
 ---
 
 ## 3. 🛠️ Transformation Layer (`airflow_dbt_project/walmart_project/`)
 
-This is the dbt project where business logic is converted into SQL.
+This is the dbt project where raw data is transformed into analytical models.
 
 ### `dbt_project.yml`
 
-- **Purpose**: Global settings for the dbt project.
+- **Purpose**: Core dbt project configuration.
 - **Key Logic**:
   - Sets the project name and profile.
-  - **Materialization Mapping**: Defines that `silver_t` and `silver_b` are `table` materializations, while `gold/ephemeral` models are `ephemeral` (views that don't exist in the DB but are used as intermediate steps).
+  - Controls materialization strategy.
+  - Defines the Bronze/Silver/Gold model flow.
 
 ### `profiles.yml`
 
-- **Purpose**: Connectivity and authentication for the data warehouse.
-- **Critical Variables**:
-  - `host`, `http_path`, and `token` (Required for Databricks connectivity).
-  - Defines the target `catalog` (walmart) and `schema`.
+- **Purpose**: Stores database connection information.
+- **Critical Parameters**:
+  - `host`
+  - `http_path`
+  - `token`
+  - `catalog`
+  - `schema`
 
 ### `macros/custom_schema.sql`
 
-- **Purpose**: Customizes how dbt handles schemas.
-- **Key Logic**: Overrides the default behavior to ensure that when a model specifies a custom schema, dbt uses that exact name instead of prefixing it with the target schema.
+- **Purpose**: Customizes how dbt names schemas in different environments.
+- **Key Logic**: Ensures that custom schema names are respected without unwanted prefixing.
 
-### `snapshots/` (e.g., `dim_customers.yml`)
+### `snapshots/`
 
-- **Purpose**: Implements Slowly Changing Dimensions (SCD Type 2).
-- **Logic**: Uses the `timestamp` strategy. It tracks the `updated_timestamp` of records; if a change is detected, it "expires" the old record and creates a new one, preserving the history of changes over time.
+- **Purpose**: Implements SCD Type 2 change tracking.
+- **Function**: Uses timestamp-based logic to detect changes in dimension tables such as customer or product records and preserves historical versions.
 
 ### `tests/test_obt.sql`
 
-- **Purpose**: High-level data integrity validation.
-- **Logic**: Specifically queries the `obt_b` table to ensure that critical join keys (Order ID, Product ID, etc.) are not NULL, which would indicate a failure in the join logic of the Silver Business layer.
+- **Purpose**: Validates business logic in the final joined model.
+- **Logic**: Ensures critical keys such as order ID and product ID are not null, preventing broken joins from reaching reporting.
 
 ---
 
 ## 4. 📊 Data Source & Setup (`walmart_dataset/`)
 
-These files provide the foundation for local testing and initial environment setup.
+This section contains the seed dataset and schema used for local setup and pipeline testing.
 
 ### `ddl/walmart_schema.sql`
 
-- **Purpose**: Database initialization.
-- **Logic**: Creates the base tables (`customers`, `stores`, `products`, `employees`, `orders`, `order_items`).
-- **Key Design**: Every table includes `created_timestamp`, `updated_timestamp`, and `is_active` columns to support the CDC logic and dbt snapshots.
+- **Purpose**: Defines the retail database schema used by the project.
+- **Tables Created**:
+  - `customers`
+  - `stores`
+  - `products`
+  - `employees`
+  - `orders`
+  - `order_items`
+- **Design Principle**: Every table includes `created_timestamp`, `updated_timestamp`, and `is_active` fields to support CDC-style ingestion and historical tracking.
 
 ### `load_data.py`
 
-- **Purpose**: Data ingestion utility.
-- **Logic**: A Python script using `psycopg2` that reads CSVs from the `data/` folder and uses the SQL `COPY` command for high-performance loading into the raw schema.
+- **Purpose**: Loads CSV files into the raw database schema.
+- **Logic**:
+  - Reads CSV files from `walmart_dataset/data/`
+  - Maps them to raw database tables
+  - Uses PostgreSQL `COPY` for efficient ingestion
 
 ### `data/` (CSV files)
 
-- **Purpose**: The raw source of truth.
-- **Role**: Acts as the "Bronze" data that the pipeline processes.
-
-The Walmart dataset in `walmart_dataset/data/` is a synthetic but realistic retail dataset designed to simulate operational business activity across customers, stores, products, employees, orders, and line items. The dataset is structured as a classic retail star/snowflake-style model: `customers` stores shopper profile information, `stores` defines retail locations, `products` contains item catalog data, `employees` captures staff assigned to a store, `orders` represents a customer purchase event at a specific store, and `order_items` records the detailed product-level breakdown of each order. The core relationship chain is `orders.customer_id -> customers.customer_id`, `orders.store_id -> stores.store_id`, `order_items.order_id -> orders.order_id`, `order_items.product_id -> products.product_id`, and `employees.store_id -> stores.store_id`. In effect, the business question can be answered by joining the order header with its items, then enriching it with customer, product, and store metadata. The working process is straightforward: raw CSV files are loaded into the Bronze layer via `load_data.py`, then the pipeline normalizes and cleans them in the Silver Technical layer (type conversion, null handling, timestamp standardization, and logical filtering), followed by the Silver Business layer where these entities are joined into a denormalized One Big Table (`obt_b`) for analytics. The final Gold layer then builds reporting tables and dimensions, using `updated_timestamp` values and `is_active` flags to support change tracking, incremental processing, and historical analysis. This design makes the dataset ideal for learning Medallion Architecture, foreign-key-based modeling, dbt transformations, and end-to-end retail analytics workflows.
+- **Purpose**: Provides the raw data source used by the pipeline.
+- **Role**: Acts as the "Bronze" layer in the Medallion architecture.
 
 ---
 
-## 🔄 Component Interdependency Map
+## 5. 🧾 Walmart Dataset Overview and Working Model
 
-$\text{Raw CSVs} \xrightarrow{\text{load\_data.py}} \text{SQL Database (Bronze)} \xrightarrow{\text{orchestrate.py (Airflow)}} \text{dbt (Silver T)} \xrightarrow{\text{dbt (Silver B)}} \text{dbt (Gold)} \xrightarrow{\text{BI / Dashboards}} \text{Decision Making}$
+The dataset in `walmart_dataset/data/` is a synthetic but realistic retail dataset designed to simulate day-to-day operations across a retail enterprise. It contains dimensions and facts that mimic a business environment where customers place orders in stores, products are purchased, employees are assigned to stores, and sales activity is tracked at order and line-item detail levels.
 
+### 5.1 Dataset Tables and Purpose
+
+#### `customers.csv`
+- Stores customer master data.
+- Includes attributes like:
+  - `customer_id`
+  - `first_name`
+  - `last_name`
+  - `email`
+  - `phone`
+  - `city`
+  - `province`
+  - `country`
+  - timestamps and active flag
+
+#### `stores.csv`
+- Stores store location data.
+- Includes store metadata such as:
+  - `store_id`
+  - `store_name`
+  - `city`
+  - `province`
+  - `country`
+  - timestamps and active flag
+
+#### `products.csv`
+- Stores the item catalog.
+- Includes:
+  - `product_id`
+  - `product_name`
+  - `category`
+  - `brand`
+  - `price`
+  - timestamps and active flag
+
+#### `employees.csv`
+- Stores employee details associated with stores.
+- Includes:
+  - `employee_id`
+  - `store_id`
+  - `first_name`
+  - `last_name`
+  - `email`
+  - `job_title`
+  - `salary`
+  - timestamps and active flag
+
+#### `orders.csv`
+- Stores order header information.
+- Includes:
+  - `order_id`
+  - `customer_id`
+  - `store_id`
+  - `order_timestamp`
+  - `payment_method`
+  - `order_status`
+  - `total_amount`
+  - timestamps and active flag
+
+#### `order_items.csv`
+- Stores item-level detail for each order.
+- Includes:
+  - `order_item_id`
+  - `order_id`
+  - `product_id`
+  - `quantity`
+  - `unit_price`
+  - `line_amount`
+  - timestamps and active flag
+
+### 5.2 Data Relationships
+
+The dataset follows a standard retail relational model:
+
+- `orders.customer_id -> customers.customer_id`
+- `orders.store_id -> stores.store_id`
+- `order_items.order_id -> orders.order_id`
+- `order_items.product_id -> products.product_id`
+- `employees.store_id -> stores.store_id`
+
+This relationship model enables business queries such as:
+- Which products are selling best by store?
+- Which customers are buying most frequently?
+- Which regions generate the highest revenue?
+- What is the revenue contribution by store, product, or category?
+- Which sales trends appear over time?
+
+### 5.3 Working Process and Pipeline Flow
+
+The dataset is loaded into the raw layer via `load_data.py`, which reads the CSV files and loads them into the Bronze schema using PostgreSQL `COPY`. Once the raw tables are populated, the data moves through the Medallion architecture:
+
+1. **Bronze Layer**
+   - Raw CSVs are ingested without transformation.
+   - Preserves the original source fidelity.
+   - Used as the starting historical reference.
+
+2. **Silver Technical Layer**
+   - Cleans and standardizes data.
+   - Handles:
+     - type conversion
+     - null handling
+     - column renaming
+     - timestamp normalization
+     - flag filtering
+   - Ensures the raw data is ready for join-based analytics.
+
+3. **Silver Business Layer**
+   - Joins related tables to build a denormalized analytical view.
+   - Produces the business-friendly OBT (`One Big Table`) model.
+   - Adds context such as customer names, product names, order totals, and store details.
+
+4. **Gold Layer**
+   - Produces final analytical tables for BI and reporting.
+   - Includes fact tables and dimension tables.
+   - Uses snapshots to track historical changes and maintain SCD Type 2 logic.
+
+### 5.4 Why This Dataset Matters
+
+This dataset is valuable because it represents a realistic retail analytics environment. It supports:
+- sales analytics
+- demand planning
+- customer behavior analysis
+- store performance reporting
+- operational monitoring
+- trend forecasting
+- reporting layer development
+
+It is ideal for learning data modeling, dbt transformation logic, Airflow orchestration, and Medallion architecture in a retail context.
+
+---
+
+## 6. 🔄 Component Interdependency Map
+
+```text
+Raw CSVs
+  -> load_data.py
+  -> SQL Database (Bronze)
+  -> Airflow orchestrate.py
+  -> dbt Silver Technical
+  -> dbt Silver Business
+  -> dbt Gold Layer
+  -> BI / Dashboards / Decision Making
+```
+
+This flow demonstrates the complete analytics lifecycle: source data is ingested, cleaned, modeled, validated, and finally used for business reporting and operational insight.
+
+---
+
+## 7. ✅ Summary
+
+This project combines a realistic retail dataset with a modern data engineering stack to demonstrate a complete end-to-end analytics pipeline. The dataset is not just a set of CSV files—it represents a business model where customer behavior, store performance, product sales, and order details are connected through strong relational keys. By processing this data through Bronze, Silver, and Gold layers, the system transforms raw source records into usable business intelligence.
