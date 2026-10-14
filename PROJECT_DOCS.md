@@ -142,138 +142,219 @@ This section contains the seed dataset and schema used for local setup and pipel
 
 ---
 
-## 5. 🧾 Walmart Dataset Overview and Working Model
+## 5. 🧾 Walmart Dataset — Expanded, Column-level and Business-Focused Documentation
 
-The dataset in `walmart_dataset/data/` is a synthetic but realistic retail dataset designed to simulate day-to-day operations across a retail enterprise. It contains dimensions and facts that mimic a business environment where customers place orders in stores, products are purchased, employees are assigned to stores, and sales activity is tracked at order and line-item detail levels.
+Below is an in-depth reference for each CSV in `walmart_dataset/data/`. This section explains: why the dataset is included, where it comes from (source), how it satisfies business use cases, the role of each column, primary and foreign keys, how tables interact, what insights each table enables, and known limitations and data-quality concerns.
 
-### 5.1 Dataset Tables and Purpose
+### 5.1 Why this dataset is included
 
-#### `customers.csv`
-- Stores customer master data.
-- Includes attributes like:
-  - `customer_id`
-  - `first_name`
-  - `last_name`
-  - `email`
-  - `phone`
-  - `city`
-  - `province`
-  - `country`
-  - timestamps and active flag
+- Purpose: The dataset is included as a realistic seed for local development, testing, CI, and demonstrations of the Medallion architecture. It replicates the common entities and relationships found in retail operations so transformations and tests can be developed without external systems.
+- Origin: The data is synthetic (generated or sampled) to be privacy-safe but realistic in distribution and cardinality. It models Walmart-like retail events (orders, order items, product catalog, customers, stores, and employees) to exercise joins, aggregations, incremental loads, and SCD patterns.
+- Business value: It allows developers and analysts to validate data ingestion, test dbt models and tests, simulate incremental ingestion and snapshots, and prototype dashboards and KPIs without needing production access.
 
-#### `stores.csv`
-- Stores store location data.
-- Includes store metadata such as:
-  - `store_id`
-  - `store_name`
-  - `city`
-  - `province`
-  - `country`
-  - timestamps and active flag
+### 5.2 How the dataset solves business needs (mapping to use cases)
 
-#### `products.csv`
-- Stores the item catalog.
-- Includes:
-  - `product_id`
-  - `product_name`
-  - `category`
-  - `brand`
-  - `price`
-  - timestamps and active flag
+- Retail performance monitoring: order and order_items provide the transactional detail required to compute revenue, average order value, units sold, and product-level performance.
+- Inventory & demand planning: product-level sales over time by store enable replenishment decisions and demand forecasting.
+- Customer and sales insights: customer-level attributes joined with orders enable RFM (recency, frequency, monetary) segmentation and cohort analysis.
+- Operational reporting: employees + store information enables headcount and labor cost analysis tied to store sales.
+- Forecasting and trend analysis: timestamped orders and order_items enable time-series modeling and seasonality detection.
 
-#### `employees.csv`
-- Stores employee details associated with stores.
-- Includes:
-  - `employee_id`
-  - `store_id`
-  - `first_name`
-  - `last_name`
-  - `email`
-  - `job_title`
-  - `salary`
-  - timestamps and active flag
+### 5.3 Table-by-table column descriptions, keys and role
 
-#### `orders.csv`
-- Stores order header information.
-- Includes:
-  - `order_id`
-  - `customer_id`
-  - `store_id`
-  - `order_timestamp`
-  - `payment_method`
-  - `order_status`
-  - `total_amount`
-  - timestamps and active flag
+Note: the CSVs are loaded into `raw.*` tables by `load_data.py` and have the same column names as shown below.
 
-#### `order_items.csv`
-- Stores item-level detail for each order.
-- Includes:
-  - `order_item_id`
-  - `order_id`
-  - `product_id`
-  - `quantity`
-  - `unit_price`
-  - `line_amount`
-  - timestamps and active flag
+#### customers.csv
+- Primary key: `customer_id` (BIGINT) — unique identifier for a customer.
+- Columns and purpose:
+  - `customer_id` — PK, stable identifier used to join orders.
+  - `first_name`, `last_name` — customer attributes for reporting and personalization.
+  - `email`, `phone` — contact info (sensitive in production; synthetic here).
+  - `city`, `province`, `country` — geography for regional analysis.
+  - `created_timestamp` — when the customer record was created in source systems.
+  - `updated_timestamp` — last update time for the record (used by snapshots/SCD logic).
+  - `is_active` (CHAR(1), values: 'Y'|'N') — soft-delete/active flag. Use to filter out inactive customers in Silver.
 
-### 5.2 Data Relationships
+Why columns matter: `customer_id` links to orders; timestamps let you detect profile changes and support SCD Type 2; contact and geography fields enable customer segmentation and regional KPIs.
 
-The dataset follows a standard retail relational model:
+Known limits: synthetic contact fields are not suitable for real communications; email/phone may not be normalized; missing or duplicated customer_ids should be checked with dbt tests.
 
-- `orders.customer_id -> customers.customer_id`
-- `orders.store_id -> stores.store_id`
-- `order_items.order_id -> orders.order_id`
-- `order_items.product_id -> products.product_id`
-- `employees.store_id -> stores.store_id`
 
-This relationship model enables business queries such as:
-- Which products are selling best by store?
-- Which customers are buying most frequently?
-- Which regions generate the highest revenue?
-- What is the revenue contribution by store, product, or category?
-- Which sales trends appear over time?
+#### stores.csv
+- Primary key: `store_id` (BIGINT).
+- Columns:
+  - `store_id` — PK.
+  - `store_name` — human-readable name.
+  - `city`, `province`, `country` — location; used for geospatial rollups.
+  - `created_timestamp`, `updated_timestamp` — lifecycle timestamps.
+  - `is_active` — active flag to retire closed stores.
 
-### 5.3 Working Process and Pipeline Flow
+Role: Provides the location dimension for sales aggregation and store-level KPIs.
 
-The dataset is loaded into the raw layer via `load_data.py`, which reads the CSV files and loads them into the Bronze schema using PostgreSQL `COPY`. Once the raw tables are populated, the data moves through the Medallion architecture:
+Limitations: store geographic granularity is city/province; no precise coordinates (latitude/longitude) available; enrich with geo data if needed.
 
-1. **Bronze Layer**
-   - Raw CSVs are ingested without transformation.
-   - Preserves the original source fidelity.
-   - Used as the starting historical reference.
 
-2. **Silver Technical Layer**
-   - Cleans and standardizes data.
-   - Handles:
-     - type conversion
-     - null handling
-     - column renaming
-     - timestamp normalization
-     - flag filtering
-   - Ensures the raw data is ready for join-based analytics.
+#### products.csv
+- Primary key: `product_id` (BIGINT).
+- Columns:
+  - `product_id` — PK.
+  - `product_name` — product label for catalog reporting.
+  - `category`, `brand` — categorical attributes for grouping and hierarchy.
+  - `price` (NUMERIC(10,2)) — catalog price; may differ from unit_price on receipts due to discounts.
+  - `created_timestamp`, `updated_timestamp`, `is_active` — lifecycle management.
 
-3. **Silver Business Layer**
-   - Joins related tables to build a denormalized analytical view.
-   - Produces the business-friendly OBT (`One Big Table`) model.
-   - Adds context such as customer names, product names, order totals, and store details.
+Role: Offers product metadata for product-performance analytics, category-level reporting and enrichment of order items.
 
-4. **Gold Layer**
-   - Produces final analytical tables for BI and reporting.
-   - Includes fact tables and dimension tables.
-   - Uses snapshots to track historical changes and maintain SCD Type 2 logic.
+Limitations: only catalog price available; promotions/discounts are not modeled as separate tables (you must infer discounts by comparing `price` and `unit_price` on order_items).
 
-### 5.4 Why This Dataset Matters
 
-This dataset is valuable because it represents a realistic retail analytics environment. It supports:
-- sales analytics
-- demand planning
-- customer behavior analysis
-- store performance reporting
-- operational monitoring
-- trend forecasting
-- reporting layer development
+#### employees.csv
+- Primary key: `employee_id` (BIGINT).
+- Columns:
+  - `employee_id` — PK.
+  - `store_id` — FK -> `stores.store_id` (nullable if corporate employee).
+  - `first_name`, `last_name`, `email` — identity fields.
+  - `job_title` — role used for labour reporting.
+  - `salary` (NUMERIC(10,2)) — used for cost-of-labour calculations.
+  - `created_timestamp`, `updated_timestamp`, `is_active` — lifecycle.
 
-It is ideal for learning data modeling, dbt transformation logic, Airflow orchestration, and Medallion architecture in a retail context.
+Role: Enables linking labour costs to store performance and building store-level efficiency metrics.
+
+Limitations: No shift/time logs are present; linking salary to specific sales periods requires additional datasets (timesheets).
+
+
+#### orders.csv
+- Primary key: `order_id` (BIGINT).
+- Columns:
+  - `order_id` — PK.
+  - `customer_id` — FK -> `customers.customer_id`.
+  - `store_id` — FK -> `stores.store_id`.
+  - `order_timestamp` — when the sale took place (used for time-series aggregation).
+  - `payment_method` — e.g., Cash, Card.
+  - `order_status` — e.g., Completed, Cancelled (useful to exclude refunds/cancels).
+  - `total_amount` — header-level sum (should equal sum of line amounts in order_items for completed orders).
+  - `created_timestamp`, `updated_timestamp`, `is_active` — lifecycle and soft-delete.
+
+Role: Order header ties customer and store context to transactional activity.
+
+Quality checks to run: verify `total_amount` ≈ SUM(order_items.line_amount) per order for active orders; check for orphaned orders (customer_id or store_id not found in dimension tables).
+
+
+#### order_items.csv
+- Primary key: `order_item_id` (BIGINT).
+- Columns:
+  - `order_item_id` — PK.
+  - `order_id` — FK -> `orders.order_id`.
+  - `product_id` — FK -> `products.product_id`.
+  - `quantity` (INT) — units sold in the line.
+  - `unit_price` (NUMERIC(10,2)) — price charged per unit on the receipt.
+  - `line_amount` (NUMERIC(12,2)) — typically `quantity * unit_price` (may include per-line discounts).
+  - `created_timestamp`, `updated_timestamp`, `is_active` — lifecycle.
+
+Role: The most granular transactional table — used to compute units sold, revenue per product, margins (given cost data), and support basket analysis.
+
+Quality checks: `line_amount` === `quantity * unit_price` or accept small rounding differences; ensure `order_id` exists in orders; check for negative quantities or zero/negative prices.
+
+
+### 5.4 Special columns explained: `is_active`, `created_timestamp`, `updated_timestamp`
+
+- `is_active` (CHAR(1)): a soft-delete flag used to indicate whether the source considers the row active. Typical values in this dataset are 'Y' (active) and 'N' (inactive). Use cases:
+  - Filter out inactive rows in Silver and Gold models to avoid skewing metrics.
+  - Support soft-delete semantics (retain history in Bronze, exclude in Silver unless historical view required).
+
+- `created_timestamp`: the time the record was first created in the source system. Useful for auditing, onboarding timelines, and initial ingestion ordering.
+
+- `updated_timestamp`: the time the record was last modified. This is the primary field used by dbt `snapshots` to detect changes and implement SCD Type 2. When `updated_timestamp` changes for a PK, dbt snapshot logic should expire the previous version and insert a new version.
+
+Why two timestamps? Having both `created_timestamp` and `updated_timestamp` preserves both the initial creation time and the most recent change time. This separation is valuable for:
+- accurate SCD tracking (change detection vs original creation date)
+- determining latency between creation and updates
+- debugging and forensic analysis of data changes
+
+### 5.5 How tables interact and examples of join patterns
+
+Core join patterns used in Silver Business (OBT) models:
+
+- Order-level enrichment (header + customer + store):
+
+  SELECT o.order_id, o.order_timestamp, o.total_amount, c.customer_id, c.first_name, c.last_name, s.store_id, s.store_name
+  FROM raw.orders o
+  LEFT JOIN raw.customers c ON o.customer_id = c.customer_id
+  LEFT JOIN raw.stores s ON o.store_id = s.store_id
+
+- Line-item expansion (line + product metadata):
+
+  SELECT oi.order_item_id, oi.order_id, oi.quantity, oi.unit_price, p.product_id, p.product_name, p.category
+  FROM raw.order_items oi
+  LEFT JOIN raw.products p ON oi.product_id = p.product_id
+
+- Full OBT (order header + items + product + customer + store):
+
+  SELECT oi.order_item_id, o.order_id, o.order_timestamp, c.customer_id, c.city, s.store_id, s.city as store_city, p.product_id, p.brand, oi.quantity, oi.unit_price, oi.line_amount
+  FROM raw.order_items oi
+  JOIN raw.orders o ON oi.order_id = o.order_id
+  LEFT JOIN raw.customers c ON o.customer_id = c.customer_id
+  LEFT JOIN raw.products p ON oi.product_id = p.product_id
+  LEFT JOIN raw.stores s ON o.store_id = s.store_id
+
+Use these joins in Silver Business to denormalize into `obt_b` for faster analytics.
+
+### 5.6 Insights and KPIs the dataset enables (and how to compute them)
+
+High-value KPIs and queries that can be computed from these tables:
+
+- Total revenue (time-window): SUM(order_items.line_amount) WHERE order_status = 'Completed' AND is_active = 'Y'
+- Revenue by store: GROUP BY store_id / store_name on SUM(line_amount)
+- Units sold by product: GROUP BY product_id SUM(quantity)
+- Average order value (AOV): SUM(order_items.line_amount) / COUNT(DISTINCT orders.order_id)
+- Repeat purchase rate: compute number of customers with >1 completed order in a window / total customers with at least one order
+- RFM segmentation: use orders.order_timestamp and SUM(line_amount) per customer to compute recency, frequency, monetary
+- Basket analysis: compute combinations of products by joining order_items by order_id and counting co-occurrence
+- Conversion & cancellation rate: ratio of order_status = 'Cancelled' to total orders
+
+Each KPI benefits from the Silver Business layer where denormalization reduces expensive joins at query time.
+
+### 5.7 Known flaws, limitations, and recommended validations
+
+Common dataset issues (present in many synthetic/seed datasets) and how to handle them:
+
+- Missing referential integrity: CSVs may contain orphan FK values (e.g., order.customer_id not in customers). Add dbt tests: `unique`, `not_null`, and `relationships` to validate.
+- Inconsistent formatting: email/phone may be non-normalized; standardize in Silver Technical.
+- Price vs unit_price mismatch: catalog `price` may not equal `unit_price` due to promotions — record a rule or add a `discounts` table in the future.
+- Incomplete timestamps: null `updated_timestamp` or timestamps in inconsistent timezones. Normalize timezone and guard with `coalesce(updated_timestamp, created_timestamp)` if needed.
+- Soft-delete ambiguity: `is_active` values should be consistent; enforce allowed values ('Y','N') with dbt tests.
+- No cost information: margins and profitability cannot be computed without `cost` or `cost_of_goods_sold` fields; consider adding `product_cost` to `products`.
+- No promotions/pricing history: discounts are not modeled explicitly; use snapshots or add a `promotions` table for accurate price history.
+
+Recommended dbt tests and checks:
+- Generic tests: `not_null` on PKs, `unique` on PKs.
+- Relationship tests: `orders.customer_id` references `customers.customer_id`; `order_items.order_id` references `orders.order_id`.
+- Data-quality tests: `total_amount` ~ SUM(order_items.line_amount) within a tolerance; `line_amount` ≈ `quantity * unit_price`.
+- Freshness tests: `dbt source freshness` on the Bronze layer to ensure timely ingestion.
+
+### 5.8 Incremental ingestion and SCD patterns
+
+- Bronze: keep raw CSVs appended as-is to preserve history.
+- Silver Technical: apply incremental models to transform only new/changed rows using primary keys + `updated_timestamp` as the watermark.
+- dbt Snapshots (Gold Dimensions): use `updated_timestamp` to capture SCD Type 2 history for customers, products, and stores.
+
+Implementation notes:
+- Use a `WHERE updated_timestamp > (select max(updated_timestamp) from model)` predicate for incremental dbt models.
+- Store `ingestion_timestamp` in Bronze to track when a file was loaded.
+
+### 5.9 Privacy and sensitivity considerations
+
+- The sample data contains `email` and `phone` columns — treat them as sensitive in production. For public repositories, keep synthetic or anonymized values and avoid exposing real PII.
+- Access control: ensure production datasets are protected and masked; consider column-level masking for `email`, `phone` and PII.
+
+### 5.10 Suggested improvements and future additions
+
+- Add `promotions` and `price_history` tables to model discounts and price changes explicitly.
+- Add `store_hours` and `shift_logs` to link sales to labor scheduling.
+- Add `product_cost` or `cost_center` to allow margin calculations.
+- Add geolocation (latitude/longitude) for stores to support spatial analytics.
+- Add `returns` and `refunds` tables if modeling reverse logistics and net revenue.
+- Introduce referential integrity checks (FK constraints) if loading into a managed database (for test/dev only; do not add to Bronze if you want to preserve raw fidelity).
 
 ---
 
@@ -296,4 +377,4 @@ This flow demonstrates the complete analytics lifecycle: source data is ingested
 
 ## 7. ✅ Summary
 
-This project combines a realistic retail dataset with a modern data engineering stack to demonstrate a complete end-to-end analytics pipeline. The dataset is not just a set of CSV files—it represents a business model where customer behavior, store performance, product sales, and order details are connected through strong relational keys. By processing this data through Bronze, Silver, and Gold layers, the system transforms raw source records into usable business intelligence.
+This project combines a realistic retail dataset with a modern data engineering stack to demonstrate a complete end-to-end analytics pipeline. The dataset is not just a set of CSV files—it represents a business model where customer behavior, store performance, product sales, and order details are connected through strong relational keys. By processing this data through Bronze, Silver, and Gold layers, the system transforms raw source records into reliable, testable, and analytics-ready business intelligence.
